@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(gh auth status:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "WebSearch",
+      "WebFetch(domain:www.onetonline.org)",
+      "WebFetch(domain:services.onetcenter.org)"
     ]
   }
 }

@@ -1,11 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { Briefcase, Mail, Phone, Lightbulb, RefreshCw, CheckCircle, Loader2, LucideIcon } from 'lucide-react'
+import { Briefcase, Mail, Phone, Lightbulb, RefreshCw, CheckCircle, Loader2, Search, LucideIcon } from 'lucide-react'
+
+interface Occupation {
+  code: string
+  title: string
+}
 
 interface Scenario {
   type: string
-  icon: LucideIcon
   title: string
   prompt: string
   tips: string[]
@@ -13,182 +17,121 @@ interface Scenario {
   criteria: string[]
 }
 
+const iconMap: Record<string, LucideIcon> = {
+  email: Mail,
+  phone: Phone,
+  problem: Lightbulb,
+}
+
 export default function WorkplaceSkillsCoach() {
   const [jobTitle, setJobTitle] = useState('')
-  const [currentJob, setCurrentJob] = useState('')
+  const [searchResults, setSearchResults] = useState<Occupation[]>([])
+  const [selectedOccupation, setSelectedOccupation] = useState<Occupation | null>(null)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [activeScenario, setActiveScenario] = useState<Scenario | null>(null)
   const [userResponse, setUserResponse] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'feedback' | 'example'>('feedback')
+  const [error, setError] = useState<string | null>(null)
 
-  const generateScenarios = (job: string): Scenario[] => {
-    const jobLower = job.toLowerCase()
+  // Step 1: Search O*NET for matching occupations
+  const handleSearch = async () => {
+    if (!jobTitle.trim()) return
+    setError(null)
+    setIsSearching(true)
+    setSearchResults([])
+    setSelectedOccupation(null)
+    setScenarios([])
+    setActiveScenario(null)
+    setFeedback(null)
 
-    // Base scenarios that work for most jobs
-    const baseScenarios: Scenario[] = [
-      {
-        type: 'email',
-        icon: Mail,
-        title: 'Email Communication',
-        prompt: `You need to email your supervisor about being late tomorrow due to a doctor's appointment. Write a professional email requesting time off.`,
-        tips: ['Include the date and time', 'Explain the reason briefly', 'Offer to make up the work', 'Use professional tone'],
-        example: 'Subject: Request for Late Arrival - [Date]\n\nDear [Supervisor Name],\n\nI wanted to inform you that I have a doctor\'s appointment tomorrow and will need to arrive at [time] instead of my usual start time. I apologize for any inconvenience and will ensure all urgent tasks are completed. Please let me know if you need any additional information.\n\nThank you for understanding.\n\nBest regards,\n[Your Name]',
-        criteria: ['professional greeting', 'specific date/time', 'brief explanation', 'willingness to accommodate', 'professional closing']
-      },
-      {
-        type: 'phone',
-        icon: Phone,
-        title: 'Phone Script Practice',
-        prompt: `A coworker calls in sick and you need to call them to ask about the status of an urgent project they were working on. Write a phone script for this conversation.`,
-        tips: ['Start with a friendly greeting', 'Ask about their wellbeing', 'Explain the urgent need politely', 'Offer help or alternative solutions'],
-        example: 'Hi [Name], this is [Your Name]. I heard you\'re not feeling well today - I hope you\'re okay and getting some rest. I\'m calling because [specific project/task] has come up as urgent. Do you know where I might find [specific information], or is there anything I should know to help move this forward? No pressure if you\'re not up to it - just want to make sure we\'re covered. Feel better soon!',
-        criteria: ['friendly greeting', 'shows concern for wellbeing', 'explains urgent need', 'asks specific questions', 'offers help']
-      },
-      {
-        type: 'problem',
-        icon: Lightbulb,
-        title: 'Problem Solving',
-        prompt: `You notice that a process at work is taking much longer than it should. What steps would you take to address this issue?`,
-        tips: ['Identify the specific problem', 'Gather information/observe', 'Consider multiple solutions', 'Decide who to involve', 'Propose a solution to your supervisor'],
-        example: '1. Document what\'s taking too long and why\n2. Time how long each step takes\n3. Ask coworkers if they\'ve noticed the same issue\n4. Brainstorm 2-3 possible improvements\n5. Schedule time with supervisor to discuss findings and suggestions',
-        criteria: ['identifies specific problem', 'gathers data/information', 'considers multiple solutions', 'involves others appropriately', 'proposes action plan']
+    try {
+      const res = await fetch(`/api/onet/search?q=${encodeURIComponent(jobTitle)}`)
+      const data = await res.json()
+
+      if (!res.ok) throw new Error(data.error)
+
+      if (data.occupations.length === 0) {
+        setError('No matching jobs found. Try a different search term.')
+      } else {
+        setSearchResults(data.occupations)
       }
-    ]
-
-    // Job-specific scenarios
-    let jobSpecific: Scenario[] = []
-
-    if (jobLower.includes('clerk') || jobLower.includes('office') || jobLower.includes('admin')) {
-      jobSpecific = [
-        {
-          type: 'email',
-          icon: Mail,
-          title: 'Filing System Email',
-          prompt: `A coworker can't find an important document. Email them instructions on how to locate it in your office's filing system.`,
-          tips: ['Be clear and specific', 'Use step-by-step instructions', 'Offer to help if needed', 'Keep it friendly'],
-          example: 'Hi [Name],\n\nThe document you\'re looking for should be in the main filing cabinet. Here\'s how to find it:\n\n1. Go to Cabinet B (near the printer)\n2. Look in the drawer labeled "[Category]"\n3. Files are organized alphabetically by [client/date/project]\n4. The document should be under "[Specific Label]"\n\nIf you still can\'t find it, let me know and I\'ll help you look!\n\nBest,\n[Your Name]',
-          criteria: ['clear greeting', 'numbered steps', 'specific locations', 'organized sequence', 'offers additional help']
-        },
-        {
-          type: 'phone',
-          icon: Phone,
-          title: 'Scheduling Call',
-          prompt: `You need to call a client to reschedule a meeting that was canceled. Write a phone script.`,
-          tips: ['Apologize for the change', 'Explain briefly', 'Offer specific alternative times', 'Confirm the new time'],
-          example: 'Hello, this is [Your Name] from [Company]. I\'m calling about your meeting scheduled for [date/time]. Unfortunately, we need to reschedule due to [brief reason]. Would [alternative date/time] or [alternative date/time] work better for you? I apologize for any inconvenience and appreciate your flexibility.',
-          criteria: ['professional introduction', 'acknowledges original meeting', 'brief explanation', 'offers specific alternatives', 'apologizes']
-        }
-      ]
-    } else if (jobLower.includes('retail') || jobLower.includes('sales') || jobLower.includes('cashier')) {
-      jobSpecific = [
-        {
-          type: 'problem',
-          icon: Lightbulb,
-          title: 'Customer Complaint',
-          prompt: `A customer is upset because an item they want is out of stock. What would you say to help resolve the situation?`,
-          tips: ['Acknowledge their frustration', 'Apologize sincerely', 'Offer alternatives', 'Provide a timeline if possible'],
-          example: 'I completely understand your frustration, and I apologize that we\'re out of stock. Let me check a few things for you: I can see if we have it at another location, check when our next shipment arrives, or show you similar items we have in stock. What would be most helpful for you?',
-          criteria: ['acknowledges feelings', 'sincere apology', 'multiple solutions offered', 'asks for preference', 'helpful tone']
-        },
-        {
-          type: 'phone',
-          icon: Phone,
-          title: 'Inventory Check Call',
-          prompt: `A customer calls asking if you have a specific product in stock. Write a script for handling this call.`,
-          tips: ['Greet warmly', 'Get specific details', 'Check thoroughly', 'Offer alternatives if unavailable'],
-          example: 'Thank you for calling [Store Name], this is [Your Name]. How can I help you today? [Listen] I\'d be happy to check on that for you. Can you tell me the specific [product details]? [Check inventory] I do have that in stock! / Unfortunately we\'re currently out, but I can check our other location or let you know when we expect more. Would that help?',
-          criteria: ['warm greeting', 'asks clarifying questions', 'indicates checking process', 'provides alternatives', 'helpful attitude']
-        }
-      ]
-    } else if (jobLower.includes('food') || jobLower.includes('restaurant') || jobLower.includes('server')) {
-      jobSpecific = [
-        {
-          type: 'problem',
-          icon: Lightbulb,
-          title: 'Order Mix-up',
-          prompt: `A customer received the wrong order. How would you handle this situation to make it right?`,
-          tips: ['Apologize immediately', 'Don\'t make excuses', 'Explain what you\'ll do to fix it', 'Offer something extra if appropriate'],
-          example: 'I\'m so sorry about that mistake. Let me get that corrected right away. I\'ll put in the correct order immediately and make sure it\'s prioritized in the kitchen. In the meantime, please keep this [item] and the correct order will be out within [time]. Would you like a complimentary [drink/appetizer] while you wait?',
-          criteria: ['immediate apology', 'takes responsibility', 'clear action plan', 'specific timeline', 'compensation offered']
-        },
-        {
-          type: 'phone',
-          icon: Phone,
-          title: 'Reservation Call',
-          prompt: `Someone calls to make a reservation for a party of 8. Write a script for this call.`,
-          tips: ['Get key details', 'Repeat information back', 'Explain any policies', 'Confirm contact info'],
-          example: 'Thank you for calling [Restaurant]. I\'d be happy to help with your reservation. What date and time were you thinking? [Listen] Perfect, party of 8 on [date] at [time]. Can I have a name for the reservation? [Get name] Great. Just so you know, for parties over 6 we do add an automatic gratuity of 18%. Is there anything else you\'d like me to note, like dietary restrictions or a special occasion? Can I get a phone number in case we need to reach you? Thank you, we look forward to seeing you!',
-          criteria: ['friendly greeting', 'gathers all details', 'repeats information', 'explains policies', 'confirms contact info']
-        }
-      ]
-    } else if (jobLower.includes('customer service') || jobLower.includes('support')) {
-      jobSpecific = [
-        {
-          type: 'email',
-          icon: Mail,
-          title: 'Follow-up Email',
-          prompt: `A customer contacted you yesterday about an issue. Write a follow-up email checking if their problem was resolved.`,
-          tips: ['Reference the original issue', 'Show you care', 'Ask specific questions', 'Offer continued help'],
-          example: 'Subject: Following up on [Issue]\n\nHi [Customer Name],\n\nI wanted to follow up on the [specific issue] we discussed yesterday. Were you able to [solution provided]? Is everything working as it should now?\n\nIf you\'re still experiencing any problems or have questions, please don\'t hesitate to reach out. I\'m here to help!\n\nBest regards,\n[Your Name]',
-          criteria: ['references previous issue', 'specific follow-up questions', 'caring tone', 'offers continued support', 'professional format']
-        },
-        {
-          type: 'problem',
-          icon: Lightbulb,
-          title: 'Difficult Customer',
-          prompt: `A customer is getting increasingly frustrated and raising their voice. What strategies would you use to de-escalate the situation?`,
-          tips: ['Stay calm', 'Listen actively', 'Validate feelings', 'Focus on solutions', 'Know when to escalate'],
-          example: 'Strategy: 1) Take a breath and stay calm - don\'t match their energy. 2) Let them vent without interrupting. 3) Say "I understand why this is frustrating" to validate. 4) Lower your voice slightly - they often mirror this. 5) Focus on "Here\'s what I can do to help." 6) If needed: "I want to help resolve this. Let me get my supervisor who may have additional options."',
-          criteria: ['maintains composure', 'active listening', 'validates emotions', 'solution-focused', 'knows escalation points']
-        }
-      ]
+    } catch (err) {
+      setError('Failed to search for jobs. Please try again.')
+      console.error(err)
+    } finally {
+      setIsSearching(false)
     }
-
-    return [...baseScenarios, ...jobSpecific]
   }
 
-  const analyzeFeedback = async (userText: string, scenario: Scenario) => {
-    setIsLoading(true)
+  // Step 2: Fetch O*NET details and generate scenarios
+  const handleSelectOccupation = async (occupation: Occupation) => {
+    setSelectedOccupation(occupation)
+    setScenarios([])
+    setActiveScenario(null)
+    setFeedback(null)
+    setError(null)
+    setIsGenerating(true)
+
     try {
-      const response = await fetch('/api/feedback', {
+      // Fetch real job data from O*NET
+      const detailsRes = await fetch(`/api/onet/details?code=${encodeURIComponent(occupation.code)}`)
+      const detailsData = await detailsRes.json()
+
+      if (!detailsRes.ok) throw new Error(detailsData.error)
+
+      // Generate personalized scenarios using Claude + O*NET data
+      const scenariosRes = await fetch('/api/generate-scenarios', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occupationDetails: detailsData.details }),
+      })
+      const scenariosData = await scenariosRes.json()
+
+      if (!scenariosRes.ok) throw new Error(scenariosData.error)
+
+      setScenarios(scenariosData.scenarios)
+    } catch (err) {
+      setError('Failed to generate scenarios. Please try again.')
+      console.error(err)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  // Step 3: Get AI feedback on user's response
+  const handleGetFeedback = async () => {
+    if (!activeScenario || !userResponse.trim()) return
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userText,
+          userText: userResponse,
           scenario: {
-            prompt: scenario.prompt,
-            criteria: scenario.criteria,
+            prompt: activeScenario.prompt,
+            criteria: activeScenario.criteria,
           },
         }),
       })
 
-      const data = await response.json()
+      const data = await res.json()
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to get feedback')
-      }
+      if (!res.ok) throw new Error(data.error)
 
       setFeedback(data.feedback)
-    } catch (error) {
-      console.error('Error getting feedback:', error)
+    } catch (err) {
       setFeedback('Unable to generate feedback at this time. Please try again.')
+      console.error(err)
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const handleGenerateScenarios = () => {
-    if (!jobTitle.trim()) return
-    setCurrentJob(jobTitle)
-    const newScenarios = generateScenarios(jobTitle)
-    setScenarios(newScenarios)
-    setActiveScenario(null)
-    setUserResponse('')
-    setFeedback(null)
   }
 
   const handleScenarioSelect = (scenario: Scenario) => {
@@ -198,15 +141,12 @@ export default function WorkplaceSkillsCoach() {
     setViewMode('feedback')
   }
 
-  const handleGetFeedback = () => {
-    if (activeScenario) {
-      analyzeFeedback(userResponse, activeScenario)
-    }
-  }
+  const getIcon = (type: string) => iconMap[type] || Lightbulb
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
       <div className="max-w-4xl mx-auto">
+        {/* Header + Search */}
         <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
           <div className="flex items-center gap-3 mb-6">
             <Briefcase className="w-8 h-8 text-indigo-600" />
@@ -214,37 +154,84 @@ export default function WorkplaceSkillsCoach() {
           </div>
 
           <p className="text-gray-600 mb-6">
-            Enter your job title to get personalized workplace scenarios and practice essential communication and problem-solving skills.
+            Search for your job title to get personalized workplace scenarios based on real job data.
           </p>
 
-          <div className="flex gap-3 mb-6">
+          <div className="flex gap-3 mb-4">
             <input
               type="text"
               value={jobTitle}
               onChange={(e) => setJobTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleGenerateScenarios()}
-              placeholder="Enter job title (e.g., Office Clerk, Retail Associate, Server)"
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="Type a job title (e.g., Office Clerk, Cashier, Server)"
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg"
             />
             <button
-              onClick={handleGenerateScenarios}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
+              onClick={handleSearch}
+              disabled={isSearching || !jobTitle.trim()}
+              className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              <RefreshCw className="w-5 h-5" />
-              Generate
+              {isSearching ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Search className="w-5 h-5" />
+              )}
+              Search
             </button>
           </div>
+
+          {error && (
+            <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded">
+              {error}
+            </div>
+          )}
+
+          {/* Search Results */}
+          {searchResults.length > 0 && (
+            <div className="mt-4">
+              <p className="text-gray-700 font-medium mb-3">Select your job:</p>
+              <div className="space-y-2">
+                {searchResults.map((occ) => (
+                  <button
+                    key={occ.code}
+                    onClick={() => handleSelectOccupation(occ)}
+                    disabled={isGenerating}
+                    className={`w-full text-left p-4 rounded-lg border-2 transition ${
+                      selectedOccupation?.code === occ.code
+                        ? 'border-indigo-600 bg-indigo-50'
+                        : 'border-gray-200 hover:border-indigo-300'
+                    } disabled:opacity-50`}
+                  >
+                    <span className="font-medium text-gray-800">{occ.title}</span>
+                    <span className="text-gray-400 text-sm ml-2">({occ.code})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {scenarios.length > 0 && (
+        {/* Loading state while generating scenarios */}
+        {isGenerating && (
+          <div className="bg-white rounded-lg shadow-lg p-8 mb-6 text-center">
+            <Loader2 className="w-10 h-10 animate-spin text-indigo-600 mx-auto mb-4" />
+            <p className="text-lg text-gray-700">
+              Getting real job data and creating personalized scenarios...
+            </p>
+            <p className="text-gray-500 mt-2">This may take a moment.</p>
+          </div>
+        )}
+
+        {/* Scenario Selection */}
+        {scenarios.length > 0 && selectedOccupation && (
           <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-4">
-              Skills Practice for: <span className="text-indigo-600">{currentJob}</span>
+              Skills Practice for: <span className="text-indigo-600">{selectedOccupation.title}</span>
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               {scenarios.map((scenario, index) => {
-                const Icon = scenario.icon
+                const Icon = getIcon(scenario.type)
                 return (
                   <button
                     key={index}
@@ -267,10 +254,14 @@ export default function WorkplaceSkillsCoach() {
           </div>
         )}
 
+        {/* Active Scenario Practice Area */}
         {activeScenario && (
           <div className="bg-white rounded-lg shadow-lg p-8">
             <div className="flex items-center gap-3 mb-4">
-              <activeScenario.icon className="w-7 h-7 text-indigo-600" />
+              {(() => {
+                const Icon = getIcon(activeScenario.type)
+                return <Icon className="w-7 h-7 text-indigo-600" />
+              })()}
               <h3 className="text-2xl font-semibold text-gray-800">{activeScenario.title}</h3>
             </div>
 
@@ -298,7 +289,7 @@ export default function WorkplaceSkillsCoach() {
                 value={userResponse}
                 onChange={(e) => setUserResponse(e.target.value)}
                 placeholder="Type your response here..."
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent min-h-32"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent min-h-32 text-lg"
               />
             </div>
 
